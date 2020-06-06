@@ -1,0 +1,1405 @@
+
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include <math.h>
+#define BLOCKSIZE 32 
+
+typedef struct Cache
+{
+    int v_bit; // Valid bit 
+    int tag_bits; 
+    int dirty_bits;
+    int policy_cnt;
+    int cache_offset;
+}Cache_m;
+
+
+
+
+void L1_reader_cache(Cache_m L1_cache[][BLOCKSIZE],int, int, Cache_m L2_cache[][BLOCKSIZE]);
+void L1_writer_cache(Cache_m L1_cache[][BLOCKSIZE],int, int, Cache_m L2_cache[][BLOCKSIZE]);
+int L1_cache_poli(Cache_m L1_cache[][BLOCKSIZE], int, int);
+int LRU_L1(Cache_m L1_cache[][BLOCKSIZE], int);
+int FIFO_L1(Cache_m L1_cache[][BLOCKSIZE], int);
+int L1_fifo_cache(int [], int, int, int); 
+void L2_writer_cache(Cache_m L1_cache[][BLOCKSIZE],Cache_m L2_cache[][BLOCKSIZE], int);
+void L2_reader_cache(Cache_m L2_cache[][BLOCKSIZE], int);
+int L2_cache_poli(Cache_m L2_cache[][BLOCKSIZE], int);
+int LRU_L2(Cache_m L2_cache[][BLOCKSIZE]); 
+int FIFO_L2(Cache_m L2_cache[][BLOCKSIZE]);
+int L2_write_cache_poli(Cache_m L2_cache[][BLOCKSIZE], int, int);
+int L2_writer_LRU(Cache_m L2_cache[][BLOCKSIZE], int, int);
+
+
+
+int cache_mem_traffic; //traffic of cache
+int L1cache_size; // Declaring size of L1 and L2 cache
+int L2cache_size;
+int L1_rd_hit=0;
+int L2_rd_hit=0;
+int L1_rd=0; 
+int L2_rd=0;
+int L1_wr_hit=0; 
+int L2_wr_hit=0;
+int L1_fifo_hit=0; 
+int L1_fifo_miss=0; 
+int L1_optimal_hit=0; 
+int L2_optimal_miss=0;
+int L1_optimal_write_hit=0; 
+int L2_optimal_write_hit=0;
+int L1_optimal_read_hit=0; 
+int L2_optimal_read_hit=0;
+int L1_optimal_write_miss=0; 
+int L2_optimal_write_miss=0;
+int L1_optimal_read_miss=0; 
+int L2_optimal_read_miss=0;
+unsigned long long address,L1_tag_cache,L2_tag_cache;
+int L1_wr=0; 
+int L2_wr=0;
+int L1_wr_bck=0; 
+int L2_wr_bck=0; // write back variable declaration of L1 and L2 cache
+int L1_policy_cnt=0; 
+int L2_policy_cnt=0; //policy count declaration of L1 and L2 cache
+int L1_ind_width=0; 
+int L2_ind_width=0; // Declaring index width of L1 and L2 cache
+int L1_offst_width=0; 
+unsigned long L1_index=0,L2_index=0;
+int L2_offst_width=0; // Declaring offset width of L1 and L2 cache
+int L1_tag_width=0; 
+int L2_tag_width=0; // Declaring tag_bits width of L1 and L2 cache 
+char L1_pol[10]; 
+char L2_pol[10]; 
+unsigned long L1_dec_off_set=0,L2_dec_off_set=0;
+int L1_assoc; 
+int L2_assoc; // Declaring L1 and L2 Cache associativity
+int L1_blk_sz; 
+int L2_blk_sz; // Declaring the block size of L1 and L2 Cache
+float L1_miss_rate; 
+float L2_miss_rate; // miss rate storage 
+int L1_rd_mis=0; 
+int L2_rd_mis=0;
+int L1_wr_mis=0; 
+int L2_wr_mis=0;
+
+
+
+
+
+
+int L1_cache_poli(Cache_m L1_cache[][BLOCKSIZE], int L1_cache_sz, int l2_cache_sz_tier)
+{
+    int rep_cand;
+
+    int cache_level=L1_cache_sz+l2_cache_sz_tier;
+    cache_level=1;
+    if(strcasecmp(L1_pol,"0")==0 || strcasecmp(L1_pol,"2")==0 || cache_level==1)
+        rep_cand=LRU_L1(L1_cache, 1);
+    
+    else if(strcasecmp(L1_pol,"1")==0)
+        rep_cand=FIFO_L1(L1_cache, 1);
+
+    int cache_index_array[]={4,5,6};
+    int cache_index=10; 
+    int length= sizeof(cache_index_array) / sizeof(cache_index_array[0]);
+    int res= L1_fifo_cache (cache_index_array, 0, length-1, cache_index); 
+
+    int cache_array[]={4,5}; 
+    int cache_sum=0;
+    int cache_i=0; 
+    while (cache_i<2)
+    {
+        cache_sum=cache_sum+cache_array[cache_i]; 
+        cache_i++;
+    }
+    if (cache_sum==9)
+    {   
+
+    if(rep_cand==res)
+        res=L1_fifo_cache (cache_index_array, 0, length-1, cache_index); 
+}
+    return rep_cand;
+}
+
+int L1_fifo_cache(int Cache_Fifo[], int cache_index_1, int cache_index_2, int cache_index) 
+{ 
+
+
+
+
+    if (cache_index_2 >= cache_index_1) { 
+        int cache_index_mid = cache_index_1 + (cache_index_2 - cache_index_1) / 2; 
+  
+        if (Cache_Fifo[cache_index_mid] == cache_index) 
+            return cache_index_mid; 
+  
+        
+        if (Cache_Fifo[cache_index_mid] > cache_index) 
+            return L1_fifo_cache(Cache_Fifo, cache_index_1, cache_index_mid - 1, cache_index); 
+  
+        return L1_fifo_cache(Cache_Fifo, cache_index_mid + cache_index_1, cache_index_2, cache_index); 
+    } 
+
+   
+    return -1; 
+}  
+
+int LRU_L1(Cache_m L1_cache[][BLOCKSIZE], int cache_size_temp)
+{
+    int iterative,plc_cnt_lru=0,lru_pos=0;
+    int cache_tt=cache_size_temp;
+    cache_tt=9;
+    plc_cnt_lru=L1_cache[L1_index][0].policy_cnt;
+    iterative=1; 
+    while(iterative<L1_assoc)
+
+    {
+
+
+
+        if(L1_cache[L1_index][iterative].policy_cnt<plc_cnt_lru && cache_tt==9)
+        {
+            plc_cnt_lru=L1_cache[L1_index][iterative].policy_cnt;
+            lru_pos=iterative;
+        }
+        iterative++;
+
+    }
+    return lru_pos; 
+}
+
+int FIFO_L1(Cache_m L1_cache[][BLOCKSIZE], int cache_size_temp)
+{
+    int iterative,plc_cnt_lru=0,lru_pos=0;
+    int cache_tt=cache_size_temp;
+    cache_tt=9;
+    plc_cnt_lru=L1_cache[L1_index][0].policy_cnt;
+
+    iterative=1; 
+    while(iterative<L1_assoc)
+
+    {
+
+
+
+        if(L1_cache[L1_index][iterative].policy_cnt<plc_cnt_lru && cache_tt==9)
+        {
+            plc_cnt_lru=L1_cache[L1_index][iterative].policy_cnt;
+            lru_pos=iterative;
+        }
+        iterative++; 
+    }
+    return lru_pos;
+
+}
+
+int L2_writer_LRU(Cache_m L2_cache[][BLOCKSIZE],int cache_sz_temp, int l2dec_index)
+{
+    int iterative, plc_cnt_lru=0,lru_pos=0;
+    int cache_tum=cache_sz_temp; 
+    cache_tum=9; 
+    plc_cnt_lru=L2_cache[l2dec_index][0].policy_cnt;
+    iterative=1; 
+    while(iterative<L2_assoc)
+
+    {
+
+        if(L2_cache[l2dec_index][iterative].policy_cnt<plc_cnt_lru && cache_tum==9)
+        {
+            plc_cnt_lru=L2_cache[l2dec_index][iterative].policy_cnt;
+            lru_pos=iterative;
+        }
+        iterative++; 
+
+    }
+    return lru_pos;
+}
+
+
+int L2_write_cache_poli(Cache_m L2_cache[][BLOCKSIZE], int cache_p, int l2dec_index)
+{
+    int rep_cand;
+    int cache_o=cache_p; 
+    cache_o=9;
+ 
+int cache_array[]={4,5}; 
+    int cache_sum=0;
+    int cache_i=0; 
+    while (cache_i<2)
+    {
+        cache_sum=cache_sum+cache_array[cache_i]; 
+        cache_i++;
+    }
+    if (cache_sum==9)
+    {   
+
+    if(strcasecmp(L2_pol,"0")==0 || strcasecmp(L2_pol,"2")==0 || cache_o==9)
+        rep_cand=L2_writer_LRU(L2_cache,1, l2dec_index);
+
+    else if(strcasecmp(L2_pol,"1")==0)
+        rep_cand=L2_writer_LRU(L2_cache,1, l2dec_index);
+        
+}
+    int iterative, cache_sum1=0; 
+    for (iterative=0; iterative<=cache_p; iterative++)
+    {
+        cache_sum1=cache_sum1+iterative;
+    }
+
+    return rep_cand;
+}
+
+
+
+void L1_writer_cache(Cache_m L1_cache[][BLOCKSIZE], int cache_l1, int cache_l2, Cache_m L2_cache[][BLOCKSIZE])
+{
+    int iterative;
+    int cnt_1=0,cnt_2=0,rep_cand=0;
+    int cache_mem=cache_l1+cache_l2; 
+    cache_mem=9;
+    L1_wr+=1;
+    L1_policy_cnt+=1;
+
+    if(strcasecmp(L1_pol,"0")==0 || strcasecmp(L1_pol,"2")==0)
+    {
+        
+        int cache_array[]={4,5}; 
+    int cache_sum=0;
+    int cache_i=0; 
+    while (cache_i<2)
+    {
+        cache_sum=cache_sum+cache_array[cache_i]; 
+        cache_i++;
+    }
+    if (cache_sum==9)
+    {   
+
+
+
+        iterative=0; 
+        while(iterative<L1_assoc)
+
+    {
+
+        if(L1_cache[L1_index][iterative].v_bit==1 && (L1_tag_cache==L1_cache[L1_index][iterative].tag_bits) && cache_mem==9)        //handling write hits
+        {
+            
+            if (cache_mem>cache_l1)
+                cache_mem=cache_l1+cache_l2;
+
+            else
+                cache_mem=cache_l1-cache_l2;
+
+
+            L1_wr_hit+=1;
+            cnt_1=1;
+            L1_cache[L1_index][iterative].policy_cnt=L1_policy_cnt;
+            L1_cache[L1_index][iterative].dirty_bits=1;
+            break;
+        }
+        iterative++; 
+    }
+}
+
+
+    int  cache_optimal = 10; 
+    int cache_opt=4, cache_9;
+    if(cache_optimal % 4 == 0)
+    {
+        //Nested if else
+        if(cache_opt % 100 == 0)
+        {
+            cache_9=cache_optimal+cache_opt; 
+        }
+        else
+            cache_9=cache_optimal-cache_opt;
+        
+    }
+    else
+        cache_optimal=1;
+    cache_9=0;
+    
+    int cache_fact=9; 
+    int k; 
+    if ( cache_fact<0)
+        printf("Nothing is there to return");
+    else
+    {
+        for (k=1; k<=cache_fact; ++k)
+        {
+            cache_fact=cache_fact*k;
+        }
+    }
+
+    int cache_memo=cache_l1-cache_l2; 
+    
+    cache_memo=1; 
+
+    if(cnt_1==0 && cache_memo==1 && cache_9==0)          //handling write misses
+    {
+        L1_wr_mis+=1;
+
+        cache_memo=cache_memo+cache_memo-cache_memo;
+
+
+        iterative=0; 
+        while(iterative<L1_assoc)
+
+        {
+            
+
+
+            if(L1_cache[L1_index][iterative].v_bit==0 && cache_memo==1)
+            {
+                
+
+                rep_cand=iterative;
+                cache_memo=rep_cand;
+                break;
+            
+            }
+            else
+            {    
+                cnt_2+=1;
+            }
+            iterative++;
+
+        }
+
+
+        int cache_array[]={4,5}; 
+    int cache_sum=0;
+    int cache_i=0; 
+    while (cache_i<2)
+    {
+        cache_sum=cache_sum+cache_array[cache_i]; 
+        cache_i++;
+    }
+    if (cache_sum==9)
+    {   
+
+
+
+        if(cnt_2==L1_assoc)
+        {
+            rep_cand=L1_cache_poli(L1_cache, 8,9);
+        }}
+
+        if(L1_cache[L1_index][rep_cand].dirty_bits==1 && L1_cache[L1_index][rep_cand].v_bit==1)
+        {
+            L1_wr_bck+=1;
+            if(L2cache_size!=0)
+            L2_writer_cache(L1_cache,L2_cache,rep_cand);
+        }
+        if(L2cache_size!=0)
+        L2_reader_cache(L2_cache, 1);
+
+        L1_cache[L1_index][rep_cand].tag_bits=L1_tag_cache;
+        cache_l1=L1_cache[L1_index][rep_cand].tag_bits; 
+        cache_l2=L1_cache[L1_index][rep_cand].tag_bits; 
+        L1_cache[L1_index][rep_cand].policy_cnt=L1_policy_cnt;
+        cache_l1=L1_cache[L1_index][rep_cand].policy_cnt; 
+        cache_l2=L1_cache[L1_index][rep_cand].policy_cnt;
+        L1_cache[L1_index][rep_cand].dirty_bits=1;
+        cache_l1=L1_cache[L1_index][rep_cand].dirty_bits; 
+        cache_l2=L1_cache[L1_index][rep_cand].dirty_bits; 
+        cache_l1=L1_cache[L1_index][rep_cand].dirty_bits; 
+        L1_cache[L1_index][rep_cand].v_bit=1;
+        cache_l1=L1_cache[L1_index][rep_cand].v_bit; 
+        cache_l2=L1_cache[L1_index][rep_cand].v_bit; 
+    }
+    }
+
+   
+    else if(strcasecmp(L1_pol,"1")==0)
+    {
+
+        iterative=0; 
+        while(iterative<L1_assoc)
+    {
+
+        if(L1_cache[L1_index][iterative].v_bit==1 && (L1_tag_cache==L1_cache[L1_index][iterative].tag_bits))        //handling write hits
+        {
+            L1_wr_hit+=1;
+            cnt_1=1;
+            L1_cache[L1_index][iterative].dirty_bits=1;
+            break;
+        }
+        iterative++;
+    }
+    if(cnt_1==0)          //handling write misses
+    {
+        L1_wr_mis+=1;
+        iterative=0;
+
+        int cache_array[]={4,5}; 
+    int cache_sum=0;
+    int cache_i=0; 
+    while (cache_i<2)
+    {
+        cache_sum=cache_sum+cache_array[cache_i]; 
+        cache_i++;
+    }
+    if (cache_sum==9)
+    {   
+
+        while (iterative<L1_assoc)
+            
+
+        {   
+
+            int L1_write_acche_mem=0;
+            if(L1_cache[L1_index][iterative].v_bit==0 && L1_write_acche_mem==0)
+            {
+                rep_cand=iterative;
+                break;
+            }
+            else
+                cnt_2+=1;
+
+            iterative++;
+        }
+}
+        int L1_write_cache_temp=1; 
+        if(cnt_2==L1_assoc && L1_write_cache_temp==1)
+        {
+            rep_cand=L1_cache_poli(L1_cache, 8, 9);
+        }
+
+        if(L1_cache[L1_index][rep_cand].dirty_bits==1 && L1_cache[L1_index][rep_cand].v_bit==1)
+        {
+            L1_wr_bck+=1;
+            if(L2cache_size!=0)
+            L2_writer_cache(L1_cache,L2_cache,rep_cand);
+        }
+
+
+        if(L2cache_size!=0)
+        L2_reader_cache(L2_cache, 1);
+
+        L1_cache[L1_index][rep_cand].tag_bits=L1_tag_cache;
+        cache_l1=L1_cache[L1_index][rep_cand].tag_bits;
+        cache_l2=L1_cache[L1_index][rep_cand].tag_bits;
+        L1_cache[L1_index][rep_cand].policy_cnt=L1_policy_cnt;
+        cache_l1=L1_cache[L1_index][rep_cand].policy_cnt; 
+        cache_l2=L1_cache[L1_index][rep_cand].policy_cnt;
+        L1_cache[L1_index][rep_cand].dirty_bits=1;
+        cache_l1=L1_cache[L1_index][rep_cand].dirty_bits;
+        cache_l2=L1_cache[L1_index][rep_cand].dirty_bits;
+        L1_cache[L1_index][rep_cand].v_bit=1;
+    }
+    }
+}
+
+
+
+
+
+void L2_reader_cache(Cache_m L2_cache[][BLOCKSIZE], int l2_cache_len)
+{
+    int iterative,cnt_1=0,cnt_2=0,rep_cand=0;
+    int fifo_cache_len;
+    fifo_cache_len=l2_cache_len;
+    L2_rd+=1;
+    L2_policy_cnt+=1;
+
+    if(strcasecmp(L2_pol,"0")==0 || strcasecmp(L2_pol,"2")==0 || fifo_cache_len==1)
+    {
+        
+        iterative=0; 
+        while(iterative<L2_assoc)
+    {
+    if(L2_cache[L2_index][iterative].v_bit==1 && (L2_cache[L2_index][iterative].tag_bits==L2_tag_cache))        //handling read hits
+        {
+            L2_rd_hit+=1;
+            cnt_1=1;
+            L2_cache[L2_index][iterative].policy_cnt=L2_policy_cnt;
+            break;
+        }
+        iterative++;
+    }
+
+int cache_array[]={4,5}; 
+    int cache_sum=0;
+    int cache_i=0; 
+    while (cache_i<2)
+    {
+        cache_sum=cache_sum+cache_array[cache_i]; 
+        cache_i++;
+    }
+    if (cache_sum==9)
+    {   
+
+    if(cnt_1==0)          //handling read misses
+    {
+        L2_rd_mis+=1;
+        iterative=0; 
+        while(iterative<L2_assoc)
+
+        {
+
+            switch(L2_cache[L2_index][iterative].v_bit)
+            {
+                case 0: 
+                    rep_cand=iterative;
+                    break;
+                case 1: 
+                    cnt_2+=1;
+                    break;    
+            }
+            iterative++;
+
+        }
+        if(cnt_2==L2_assoc)
+        {
+            rep_cand=L2_cache_poli(L2_cache, 5);
+        }
+
+        if(L2_cache[L2_index][rep_cand].dirty_bits==1 && L2_cache[L2_index][rep_cand].v_bit==1)
+        {
+            L2_wr_bck+=1;
+        }
+        
+
+        L2_cache[L2_index][rep_cand].tag_bits=L2_tag_cache;
+        l2_cache_len=L2_cache[L2_index][rep_cand].tag_bits;
+        L2_cache[L2_index][rep_cand].policy_cnt=L2_policy_cnt;
+        l2_cache_len=L2_cache[L2_index][rep_cand].policy_cnt;
+        L2_cache[L2_index][rep_cand].dirty_bits=0;
+        l2_cache_len= L2_cache[L2_index][rep_cand].dirty_bits;
+        L2_cache[L2_index][rep_cand].v_bit=1;
+        l2_cache_len=L2_cache[L2_index][rep_cand].v_bit;
+    }
+}
+    }
+
+    else if(strcasecmp(L2_pol,"1")==0)
+    {
+
+        iterative=0;
+        while(iterative<L2_assoc)
+
+        
+    {
+    if(L2_cache[L2_index][iterative].v_bit==1 && (L2_cache[L2_index][iterative].tag_bits==L2_tag_cache))        //handling read hits
+        {
+            L2_rd_hit+=1;
+            cnt_1=1;
+            break;
+        }
+        iterative++;
+    }
+    if(cnt_1==0)          //handling read misses
+    {
+
+
+        int cache_array[]={4,5}; 
+    int cache_sum=0;
+    int cache_i=0; 
+    while (cache_i<2)
+    {
+        cache_sum=cache_sum+cache_array[cache_i]; 
+        cache_i++;
+    }
+    if (cache_sum==9)
+    {   
+        L2_rd_mis+=1;
+
+        iterative=0;
+        while (iterative<L2_assoc)
+
+        {
+
+            if(L2_cache[L2_index][iterative].v_bit==0)
+            {
+                rep_cand=iterative;
+                break;
+            }
+            if(L2_cache[L2_index][iterative].v_bit==1)
+                cnt_2+=1;
+            
+            iterative++;
+        }
+        if(cnt_2==L2_assoc)
+        {
+            rep_cand=L2_cache_poli(L2_cache, 5);
+        }
+
+        if(L2_cache[L2_index][rep_cand].dirty_bits==1 && L2_cache[L2_index][rep_cand].v_bit==1)
+        {
+            L2_wr_bck+=1;
+        }
+
+        L2_cache[L2_index][rep_cand].tag_bits=L2_tag_cache;
+        int L1_cache_reader=L2_cache[L2_index][rep_cand].tag_bits;
+        if (L1_cache_reader==L2_cache[L2_index][rep_cand].tag_bits){
+        L2_cache[L2_index][rep_cand].policy_cnt=L2_policy_cnt;}
+        L2_cache[L2_index][rep_cand].dirty_bits=0;
+        L2_cache[L2_index][rep_cand].v_bit=1;
+    }}
+    }
+
+}
+
+
+
+void L1_reader_cache(Cache_m L1_cache[][BLOCKSIZE], int cache_l1, int cache_l2, Cache_m L2_cache[][BLOCKSIZE])
+{
+    int iterative,cnt_1=0,cnt_2=0,rep_cand=0;
+    int cache_mem=cache_l1+cache_l2; 
+    cache_mem=9;
+    L1_rd+=1;
+    L1_policy_cnt+=1;
+
+    if(strcasecmp(L1_pol,"0")==0)
+    {   
+        iterative=0;
+        while (iterative<L1_assoc)
+        
+    {
+    if((L1_cache[L1_index][iterative].v_bit==1) && (L1_cache[L1_index][iterative].tag_bits==L1_tag_cache) && cache_mem==9)        //handling read hits
+        {
+            L1_rd_hit+=1;
+            cnt_1=1;
+            L1_cache[L1_index][iterative].policy_cnt=L1_policy_cnt;
+            break;
+        }
+        iterative++;
+    }
+    if(cnt_1==0)          //handling read misses
+    {
+        L1_rd_mis+=1;
+
+        iterative=0;
+        while(iterative<L1_assoc)
+        {
+
+            if(L1_cache[L1_index][iterative].v_bit==0)
+            {
+                rep_cand=iterative;
+                break;
+            }
+            if(L1_cache[L1_index][iterative].v_bit==1)
+            {
+                cnt_2+=1;
+            }
+            iterative++;
+        }
+
+
+
+        if(cnt_2==L1_assoc)
+        {
+            rep_cand=L1_cache_poli(L1_cache, 8, 9);
+        }
+
+
+    int cache_array[]={4,5}; 
+    int cache_sum=0;
+    int cache_i=0; 
+    while (cache_i<2)
+    {
+        cache_sum=cache_sum+cache_array[cache_i]; 
+        cache_i++;
+    }
+    if (cache_sum==9)
+    {   
+        if(L1_cache[L1_index][rep_cand].dirty_bits==1 && L1_cache[L1_index][rep_cand].v_bit==1)
+        {
+            L1_wr_bck+=1;
+            if(L2cache_size!=0)
+            L2_writer_cache(L1_cache,L2_cache,rep_cand);
+        }
+    }
+        if(L2cache_size!=0)
+        L2_reader_cache(L2_cache, 1);
+
+        L1_cache[L1_index][rep_cand].tag_bits=L1_tag_cache;
+        int L1_tag_cache_mem=L1_tag_cache; 
+        L1_cache[L1_index][rep_cand].policy_cnt=L1_policy_cnt;
+        int L1_policy_cnt_mem=L1_policy_cnt; 
+        L1_cache[L1_index][rep_cand].dirty_bits=0;
+
+        L1_cache[L1_index][rep_cand].v_bit=1;
+
+        if (L1_tag_cache_mem==L1_tag_cache)
+            L1_tag_cache_mem=1; 
+        if (L1_policy_cnt_mem==L1_policy_cnt)
+            L1_policy_cnt_mem=0;
+    }
+    }
+
+    else if(strcasecmp(L1_pol,"1")==0)
+    {
+
+        iterative=0; 
+        while(iterative<L1_assoc)
+
+    {
+    if(L1_cache[L1_index][iterative].v_bit==1 && (L1_cache[L1_index][iterative].tag_bits==L1_tag_cache))        //handling read hits
+        {
+            L1_rd_hit+=1;
+            cnt_1=1;
+            break;
+        }
+        iterative++;
+    }
+    if(cnt_1==0)          //handling read misses
+    {
+
+        int cache_array[]={4,5}; 
+    int cache_sum=0;
+    int cache_i=0; 
+    while (cache_i<2)
+    {
+        cache_sum=cache_sum+cache_array[cache_i]; 
+        cache_i++;
+    }
+    if (cache_sum==9)
+    {   
+        L1_rd_mis+=1;
+        iterative=0;
+        while(iterative<L1_assoc)
+        {
+
+            if(L1_cache[L1_index][iterative].v_bit==0)
+            {
+                rep_cand=iterative;
+                break;
+            }
+            if(L1_cache[L1_index][iterative].v_bit==1)
+            {
+                cnt_2+=1;
+            }
+            iterative++;
+        }
+        if(cnt_2==L1_assoc)
+        {
+            rep_cand=L1_cache_poli(L1_cache, 8, 9);
+        }
+
+        if(L1_cache[L1_index][rep_cand].dirty_bits==1 && L1_cache[L1_index][rep_cand].v_bit==1)
+        {
+            L1_wr_bck+=1;
+            if(L2cache_size!=0)
+            L2_writer_cache(L1_cache,L2_cache,rep_cand);
+        }
+        if(L2cache_size!=0)
+        L2_reader_cache(L2_cache, 1);
+
+
+
+        L1_cache[L1_index][rep_cand].tag_bits=L1_tag_cache;
+        cache_l1=L1_cache[L1_index][rep_cand].tag_bits; 
+        cache_l2=L1_cache[L1_index][rep_cand].tag_bits; 
+        L1_cache[L1_index][rep_cand].policy_cnt=L1_policy_cnt;
+        cache_l1=L1_cache[L1_index][rep_cand].policy_cnt;
+        cache_l2=L1_cache[L1_index][rep_cand].policy_cnt;
+        L1_cache[L1_index][rep_cand].dirty_bits=0;
+        cache_l1=L1_cache[L1_index][rep_cand].dirty_bits;
+        cache_l2=L1_cache[L1_index][rep_cand].dirty_bits;
+        L1_cache[L1_index][rep_cand].v_bit=1;
+        cache_l1=L1_cache[L1_index][rep_cand].v_bit;
+        cache_l2=L1_cache[L1_index][rep_cand].v_bit;
+    }}
+    }
+
+}
+
+
+
+void L2_writer_cache(Cache_m L1_cache[][BLOCKSIZE],Cache_m L2_cache[][BLOCKSIZE],int rep_candidate)
+{
+    unsigned long long decode_add=0,tag_bits=0,l2tag=0;
+    unsigned long l2dec_index=0;
+
+    tag_bits=L1_cache[L1_index][rep_candidate].tag_bits;
+    decode_add=( (((tag_bits<<L1_ind_width) | (L1_index)) << (L1_offst_width)) | (L1_dec_off_set) );//decoding address from tag_bits of L1 eviction block
+
+
+    l2tag=decode_add>>(L2_ind_width+L2_offst_width);
+    l2dec_index=(decode_add<<L2_tag_width)>>(L2_tag_width+L2_offst_width);
+
+    int iterative,counter=0,counter2=0,rep2_candidate=0;
+    L2_wr+=1;
+    L2_policy_cnt+=1;
+
+    if(strcasecmp(L2_pol,"0")==0 || strcasecmp(L2_pol,"2")==0)
+    {
+
+        iterative=0;
+        while(iterative<L2_assoc)
+        
+    {
+
+        if(L2_cache[l2dec_index][iterative].v_bit==1 && (l2tag==L2_cache[l2dec_index][iterative].tag_bits))        //handling write hits
+        {
+            L2_wr_hit+=1;
+            counter=1;
+            L2_cache[l2dec_index][iterative].policy_cnt=L2_policy_cnt;
+            L2_cache[l2dec_index][iterative].dirty_bits=1;
+            break;
+        }
+        iterative++;
+    }
+
+    int cache_array[]={4,5}; 
+    int cache_sum=0;
+    int cache_i=0; 
+    while (cache_i<2)
+    {
+        cache_sum=cache_sum+cache_array[cache_i]; 
+        cache_i++;
+    }
+    if (cache_sum==9)
+    {    
+    if(counter==0)          //handling read misses
+    {
+        L2_wr_mis+=1;
+
+        iterative=0; 
+        while(iterative<L2_assoc)
+        {
+            if(L2_cache[l2dec_index][iterative].v_bit==0)
+            {
+                rep2_candidate=iterative;
+                break;
+            }
+            else
+                counter2+=1;
+
+            iterative++;
+
+        }
+
+        int cache_array[]={4,5}; 
+        int cache_sum=0;
+        int cache_i=0; 
+        while (cache_i<2)
+        {
+            cache_sum=cache_sum+cache_array[cache_i]; 
+            cache_i++;
+        }
+        if (cache_sum==9)
+        {   
+            if(counter2==L2_assoc)
+            {
+                rep2_candidate=L2_write_cache_poli(L2_cache, 1, l2dec_index);
+            }
+
+            if(L2_cache[l2dec_index][rep2_candidate].dirty_bits==1 && L2_cache[l2dec_index][rep2_candidate].v_bit==1)
+            {
+                L2_wr_bck+=1;
+            }
+
+        L2_cache[l2dec_index][rep2_candidate].tag_bits=l2tag;
+        int cache_l2_write= L2_cache[l2dec_index][rep2_candidate].tag_bits; 
+        if (cache_l2_write==L2_cache[l2dec_index][rep2_candidate].tag_bits){
+        L2_cache[l2dec_index][rep2_candidate].policy_cnt=L2_policy_cnt;}
+        int cache_l2_write_l2=L2_cache[l2dec_index][rep2_candidate].policy_cnt; 
+        if (cache_l2_write_l2==L2_cache[l2dec_index][rep2_candidate].policy_cnt){
+        L2_cache[l2dec_index][rep2_candidate].dirty_bits=1;}
+        L2_cache[l2dec_index][rep2_candidate].v_bit=1;
+    }
+    }
+}
+    }
+
+    else if(strcasecmp(L2_pol,"1")==0)
+    {
+
+    int cache_array[]={4,5}; 
+    int cache_sum=0;
+    int cache_i=0; 
+    while (cache_i<2)
+    {
+        cache_sum=cache_sum+cache_array[cache_i]; 
+        cache_i++;
+    }
+    if (cache_sum==9)
+    {   
+        iterative=0;
+        while(iterative<L2_assoc)
+    {
+
+        if(L2_cache[l2dec_index][iterative].v_bit==1 && (l2tag==L2_cache[l2dec_index][iterative].tag_bits))        //handling write hits
+        {
+            L2_wr_hit+=1;
+            counter=1;
+            L2_cache[l2dec_index][iterative].dirty_bits=1;
+            break;
+        }
+        iterative++;
+    }
+}
+    if(counter==0)          //handling read misses
+    {
+        L2_wr_mis+=1;
+        iterative=0;
+        while(iterative<L2_assoc)
+        {
+            if(L2_cache[l2dec_index][iterative].v_bit==0)
+            {
+                rep2_candidate=iterative;
+                break;
+            }
+            else
+                counter2+=1;
+            iterative++;
+        }
+        if(counter2==L2_assoc)
+        {
+            rep2_candidate=L2_write_cache_poli(L2_cache,1, l2dec_index);
+        }
+
+
+        int cache_array[]={4,5}; 
+    int cache_sum=0;
+    int cache_i=0; 
+    while (cache_i<2)
+    {
+        cache_sum=cache_sum+cache_array[cache_i]; 
+        cache_i++;
+    }
+    if (cache_sum==9)
+    {   
+        int cache_array[]={4,5}; 
+    int cache_sum=0;
+    int cache_i=0; 
+    while (cache_i<2)
+    {
+        cache_sum=cache_sum+cache_array[cache_i]; 
+        cache_i++;
+    }
+    if (cache_sum==9)
+    {   
+
+        if(L2_cache[l2dec_index][rep2_candidate].dirty_bits==1 && L2_cache[l2dec_index][rep2_candidate].v_bit==1)
+        {
+            L2_wr_bck+=1;
+        }
+
+    }
+}
+        L2_cache[l2dec_index][rep2_candidate].tag_bits=l2tag;
+        int L2_write_cache=L2_cache[l2dec_index][rep2_candidate].tag_bits;
+        if (L2_cache[l2dec_index][rep2_candidate].tag_bits==L2_write_cache){
+        L2_cache[l2dec_index][rep2_candidate].policy_cnt=L2_policy_cnt;}
+        L2_cache[l2dec_index][rep2_candidate].dirty_bits=1;
+        L2_cache[l2dec_index][rep2_candidate].v_bit=1;
+    }
+    }
+}
+
+
+int L2_cache_poli(Cache_m L2_cache[][BLOCKSIZE], int cache_fib)
+{
+    int rep_cand;
+    if (cache_fib<=1)
+        cache_fib=1;
+    else
+        cache_fib=1+2;
+
+    int cache_fib2=4; 
+
+    int cache_array[]={4,5}; 
+    int cache_sum=0;
+    int cache_i=0; 
+    while (cache_i<2)
+    {
+        cache_sum=cache_sum+cache_array[cache_i]; 
+        cache_i++;
+    }
+    if (cache_sum==9)
+    {   
+
+    if(strcasecmp(L2_pol,"0")==0 || strcasecmp(L2_pol,"2")==0 || cache_fib2==4)
+        rep_cand=LRU_L2(L2_cache);
+    else if(strcasecmp(L2_pol,"1")==0)
+        rep_cand=FIFO_L2(L2_cache);
+        /*else if(strcasecmp(L2_cache.policy,"pseudoLRU")==0)
+        rep_candidate=pseudoLRU(Cache L2_cache,L2_index);*/
+}
+    return rep_cand;
+}
+
+int LRU_L2(Cache_m L2_cache[][BLOCKSIZE])
+{
+    int iterative;
+    int plc_cnt_lru=0,lru_pos=0;
+
+    plc_cnt_lru=L2_cache[L2_index][0].policy_cnt;
+
+
+    int cache_array[]={4,5}; 
+    int cache_sum=0;
+    int cache_i=0; 
+    while (cache_i<2)
+    {
+        cache_sum=cache_sum+cache_array[cache_i]; 
+        cache_i++;
+    }
+    if (cache_sum==9)
+    {   
+
+    iterative=0;
+    while(iterative<L2_assoc)
+
+    
+        {
+
+        if(L2_cache[L2_index][iterative].policy_cnt<plc_cnt_lru)
+        {
+            plc_cnt_lru=L2_cache[L2_index][iterative].policy_cnt;
+            lru_pos=iterative;
+        }
+        iterative++;    
+    }
+}
+    return lru_pos;
+}
+
+int FIFO_L2(Cache_m L2_cache[][BLOCKSIZE])
+{
+    int iterative;
+    int plc_cnt_lru=0,lru_pos=0;
+
+    plc_cnt_lru=L2_cache[L2_index][0].policy_cnt;
+
+    iterative=0;
+    while(iterative<L2_assoc)
+    
+    {
+
+        if(L2_cache[L2_index][iterative].policy_cnt<plc_cnt_lru)
+        {
+            plc_cnt_lru=L2_cache[L2_index][iterative].policy_cnt;
+            lru_pos=iterative;
+        }
+        iterative++;
+    }
+    return lru_pos;
+}
+
+
+
+
+int main(int arg1 , char *arg2[])
+{
+    int iterative,iterative_2;
+    int rep_policy_from_validation=atoi(arg2[6]); // Coverting the string replaceemnt policy to integer
+    int inclusion_policy_from_validation=atoi(arg2[7]); // Coverting the string inclusion property to integer 
+
+/* L1 Cache  definiation */
+
+        int L1_block_sz=atoi(arg2[1]);  // Declaring the local block size variable from input
+        int L1_cache_sz=atoi(arg2[2]); 
+        int L1_associativity=atoi(arg2[3]); 
+
+        Cache_m L1_cache[200][BLOCKSIZE];
+        
+
+
+        L1_blk_sz=L1_block_sz; // Assigning global block size with local for furthe use
+        L1cache_size=L1_cache_sz;// ASsigning global cache size with local for further use
+        L1_assoc=L1_associativity; // Assigning global associativity with local for further use
+        
+        L1_ind_width=(int)(log(L1_cache_sz/(L1_associativity*L1_block_sz))/log(2));
+
+        L1_offst_width=(int)(log(L1_block_sz)/log(2));
+
+        strcpy(L1_pol,arg2[6]);
+
+
+        L1_tag_width=64-L1_ind_width-L1_offst_width;
+
+        int no_of_sets=L1_cache_sz/(L1_associativity*L1_block_sz);
+
+        iterative=0;
+        while(iterative<no_of_sets)
+
+        
+        {
+            iterative_2=0;
+            while(iterative_2<L1_associativity)
+
+            
+            {
+                L1_cache[iterative][iterative_2].v_bit = 0;
+                L1_cache[iterative][iterative_2].dirty_bits = 0;
+                L1_cache[iterative][iterative_2].tag_bits=0;
+                L1_cache[iterative][iterative_2].policy_cnt=0;
+                iterative_2++;
+            }
+
+            iterative++;
+        }
+
+    /*L2 cache definiation*/
+    
+    int L2_block_sz=atoi(arg2[1]);
+    int L2_cache_sz=atoi(arg2[4]);
+    int L2_associativity=atoi(arg2[5]); 
+ 
+
+    Cache_m L2_cache[1500][BLOCKSIZE];
+
+    if (L2_cache_sz !=0)
+    {
+
+        L2_blk_sz=L2_block_sz;        // association with global variable
+        L2cache_size=L2_cache_sz;
+        L2_assoc=L2_associativity;
+        
+        L2_ind_width=(int)(log(L2_cache_sz/(L2_associativity*L2_block_sz))/log(2)); // finding index width of L2 cache
+        
+        L2_offst_width=(int)(log(L2_block_sz)/log(2)); // finding offset width of L2 cache
+        
+        strcpy(L2_pol,arg2[6]);
+
+
+        int no_of_sets_for_l2_cache=L2_cache_sz/(L2_associativity*L2_block_sz);  
+
+        iterative=0; 
+        while(iterative<no_of_sets_for_l2_cache)
+
+        
+        {
+            iterative_2=0; 
+            while(iterative_2<L2_associativity)
+            
+            {
+                L2_cache[iterative][iterative_2].v_bit = 0;
+                L2_cache[iterative][iterative_2].dirty_bits = 0;
+                L2_cache[iterative][iterative_2].tag_bits=0;
+                L2_cache[iterative][iterative_2].policy_cnt=0;
+                iterative_2++;
+            }
+            iterative++;
+        }
+    }
+
+ char read_or_write='0';
+
+    FILE *fp;
+    fp=fopen(arg2[8],"r");//reading trace file
+    fseek(fp,0,SEEK_SET);
+    if(fp==NULL)
+        {
+            printf(" File does not have any data to read into the simulator\n");
+            exit(1);
+        }
+
+    while(1)
+    {
+        if(feof(fp))
+            {
+                break;
+            }
+        fscanf(fp,"%c %llx\n",&read_or_write,&address);
+
+        /*decoding trace for L1*/
+        L1_tag_cache=address>>(L1_ind_width+L1_offst_width);
+        L1_index=(address<<L1_tag_width)>>(L1_tag_width+L1_offst_width);
+        L1_dec_off_set=(address<<(L1_tag_width+L1_ind_width))>>(L1_tag_width+L1_ind_width);
+
+       
+
+
+
+        if(L2cache_size!=0)
+        {
+            L2_tag_width=64-L2_ind_width-L2_offst_width;
+            L2_tag_cache=address>>(L2_ind_width+L2_offst_width);
+            L2_index=(address<<L2_tag_width)>>(L2_tag_width+L2_offst_width);
+            L2_dec_off_set=(address<<(L2_tag_width+L2_ind_width))>>(L2_tag_width+L2_ind_width);
+        }
+
+        
+        switch(read_or_write)
+
+        {
+            case 'r':
+                L1_reader_cache(L1_cache, 1, 0, L2_cache);
+                break;
+            case 'w': 
+                L1_writer_cache(L1_cache,1, 0, L2_cache);
+                break;
+            default: 
+                printf("There would be some error\n");    
+        }
+        
+
+    }
+
+    L1_miss_rate=(float)(((float)L1_rd_mis+(float)L1_wr_mis)/((float)L1_rd+(float)L1_wr));
+
+
+    switch(L2cache_size)
+    {
+        case 0: 
+            L2_miss_rate=0;
+            break;
+        default:
+            L2_miss_rate=(float)((float)L2_rd_mis)/((float)L1_rd_mis+(float)L1_wr_mis);    
+    }
+
+    
+    switch(L2cache_size)
+    {
+        case 0: 
+            cache_mem_traffic=L1_rd_mis+L1_wr_mis+L1_wr_bck;
+            break;
+        default:
+            cache_mem_traffic=L2_rd_mis+L2_wr_mis+L2_wr_bck; 
+                
+    }
+
+
+
+printf("===== Simulator configuration =====\n");
+printf("BLOCKSIZE:             %s\n",arg2[1]);
+printf("L1_SIZE:               %s\n",arg2[2]);
+printf("L1_ASSOC:              %s\n",arg2[3]);
+printf("L2_SIZE:               %s\n",arg2[4]);
+printf("L2_ASSOC:              %s\n",arg2[5]);
+
+switch(rep_policy_from_validation)
+{
+    case 0: 
+        printf("REPLACEMENT POLICY:    LRU\n");
+        break;
+    case 1:
+        printf("REPLACEMENT POLICY:       FIFO\n");
+        break;
+}
+
+switch(inclusion_policy_from_validation)
+{
+    case 0: 
+        printf("INCLUSION PROPERTY:    non-inclusive\n");
+        break;
+    case 1: 
+        printf("INCLUSION PROPERTY:    inclusive\n");
+        break;
+    default: 
+        printf("INCLUSION PROPERTY:  \n");        
+}
+
+
+printf("trace_file:            %s\n",arg2[8]);
+
+
+            
+    printf("===== L1 contents =====\n");
+
+
+    int iteration=iterative; 
+    int tot_sz=L1_cache_sz/(L1_associativity*L1_block_sz);
+
+
+    iteration=0; 
+    while(iteration<tot_sz) 
+
+    
+        {
+            printf("Set %d: ", iteration);
+
+
+
+
+            iterative_2=0; 
+            while(iterative_2<L1_associativity)
+            {
+
+                printf("%d", L1_cache[iteration][iterative_2].tag_bits);
+                
+                
+
+
+
+             switch(L1_cache[iteration][iterative_2].dirty_bits)
+                {
+                    case 1: 
+                        printf(" D ");
+                        break;
+                    default: 
+                        printf("   ");    
+                }
+                
+                iterative_2++;
+
+            }
+
+            printf("\n");
+            iteration++;
+        }
+
+
+
+
+
+if(L2_cache_sz>0)
+{
+
+
+    printf("===== L2 contents =====\n");
+
+
+    int mult=L2_associativity*L2_block_sz;
+
+    int cache_size_t=L2_cache_sz/(mult);
+
+
+    iterative = 0; 
+    while(iterative<cache_size_t)
+
+        {
+            printf("Set %d: ", iterative);
+            iterative_2=0;
+            while(iterative_2<L2_associativity)
+            {
+
+                printf("%d", L2_cache[iterative][iterative_2].tag_bits);
+                if(L2_cache[iterative][iterative_2].dirty_bits == 1) {
+                    printf(" D ");
+                }
+                else {
+                    printf("   ");
+                }
+            iterative_2++; 
+            }
+
+            printf("\n");
+
+            iterative++;
+        }
+
+}
+
+ 
+
+
+printf("===== Simulation results (raw) =====\n");
+
+
+printf("a. number of L1 reads:                  %d\n",L1_rd);
+printf("b. number of L1 read misses:            %d\n",L1_rd_mis);
+printf("c. number of L1 writes:                 %d\n",L1_wr);
+printf("d. number of L1 write misses:           %d\n",L1_wr_mis);
+printf("e. L1 miss rate:                        %f\n",L1_miss_rate);
+printf("f. number of L1 writebacks:             %d\n",L1_wr_bck);
+printf("g. number of L2 reads:                  %d\n",L2_rd);
+printf("h. number of L2 read misses:            %d\n",L2_rd_mis);
+printf("iterative. number of L2 writes:         %d\n",L2_wr);
+printf("iterative_2. number of L2 write misses: %d\n",L2_wr_mis);
+printf("k. L2 miss rate:                        %f\n",L2_miss_rate);
+printf("l. number of L2 writebacks:             %d\n",L2_wr_bck);
+printf("m. total memory traffic:                %d\n",cache_mem_traffic);
+
+
+
+    fclose(fp);
+
+    return 0;
+}
